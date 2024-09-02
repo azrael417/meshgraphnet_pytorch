@@ -51,7 +51,7 @@ class GraphNetBlock(nn.Module):
     
     def _update_nodes(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor) -> torch.Tensor:
         _, receivers = edge_idx
-        accumulate_edges = torch.zeros_like(node_features)
+        accumulate_edges = torch.zeros([node_features.shape[0], edge_features.shape[1]], dtype=edge_features.dtype, device=edge_features.device)
         accumulate_edges = torch.scatter_add(accumulate_edges, src=edge_features, index=receivers, dim=0)   # ~ tf.math.unsorted_segment_sum
         features = torch.cat([node_features, accumulate_edges], dim=-1)
         return self.mlp_node(features)

@@ -1,7 +1,6 @@
 import torch
 from torch import nn
-from torch_scatter import scatter_add
-
+from typing import Tuple
 
 class MLP(nn.Module):
     def __init__(self, 
@@ -30,7 +29,7 @@ class MLP(nn.Module):
             
         self.net = nn.Sequential(*layers)
         
-    def forward(self, input):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         output = self.net(input)
         
         return output
@@ -42,7 +41,7 @@ class GraphNetBlock(nn.Module):
         self.mlp_node = MLP(input_dim=2*hidden_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, num_layers=num_layers)  #3*hidden_dim: [nodes, accumulated_edges]
         self.mlp_edge = MLP(input_dim=3*hidden_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, num_layers=num_layers)  #3*hidden_dim: [sender, edge, receiver]
     
-    def _update_edges(self, edge_idx, node_features, edge_features):
+    def _update_edges(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor) -> torch.Tensor:
         senders, receivers = edge_idx
         sender_features = node_features[senders]
         receiver_features = node_features[receivers]
@@ -50,17 +49,17 @@ class GraphNetBlock(nn.Module):
         
         return self.mlp_edge(features)
     
-    def _update_nodes(self, edge_idx, node_features, edge_features):
+    def _update_nodes(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor) -> torch.Tensor:
         _, receivers = edge_idx
-        accumulate_edges = scatter_add(edge_features, receivers, dim=0)   # ~ tf.math.unsorted_segment_sum
+        accumulate_edges = torch.zeros_like(node_features)
+        accumulate_edges = torch.scatter_add(accumulate_edges, src=edge_features, index=receivers, dim=0)   # ~ tf.math.unsorted_segment_sum
         features = torch.cat([node_features, accumulate_edges], dim=-1)
         return self.mlp_node(features)
         
-    def forward(self, edge_idx, node_features, edge_features):
+    def forward(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor):
         """
         TODO: Docs
         """
-        
         new_edge_features = self._update_edges(edge_idx, node_features, edge_features)
         new_node_features = self._update_nodes(edge_idx, node_features, new_edge_features)
         
@@ -77,7 +76,7 @@ class Encoder(nn.Module):
         self.node_mlp = MLP(input_dim=input_dim_node, hidden_dim=hidden_dim, output_dim=hidden_dim, num_layers=num_layers, activate_final=False)
         self.edge_mlp = MLP(input_dim=input_dim_edge, hidden_dim=hidden_dim, output_dim=hidden_dim, num_layers=num_layers, activate_final=False)
         
-    def forward(self, node_features, edge_features):
+    def forward(self, node_features: torch.Tensor, edge_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         node_latents = self.node_mlp(node_features)
         edge_latents = self.edge_mlp(edge_features)
         
@@ -91,7 +90,7 @@ class Process(nn.Module):
         for i in range(message_passing_steps):
             self.blocks.append(GraphNetBlock(hidden_dim, num_layers))
             
-    def forward(self, edge_idx, node_features, edge_features):
+    def forward(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         for graphnetblock in self.blocks:
             node_features, edge_features = graphnetblock(edge_idx, node_features, edge_features)
             
@@ -103,7 +102,7 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.mlp = MLP(input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=output_dim, num_layers=num_layers, layer_norm=False, activate_final=False)
     
-    def forward(self, node_features):
+    def forward(self, node_features: torch.Tensor) -> torch.Tensor:
         return self.mlp(node_features)
         
         
@@ -122,7 +121,7 @@ class EncodeProcessDecode(nn.Module):
         self.process = Process(hidden_dim, num_layers, message_passing_steps)
         self.decoder = Decoder(hidden_dim, output_dim, num_layers)
         
-    def forward(self, edge_idx, node_features, edge_features):
+    def forward(self, edge_idx: Tuple[torch.Tensor, torch.Tensor], node_features: torch.Tensor, edge_features: torch.Tensor) -> torch.Tensor:
         # Encode node/edge feature to latent space
         node_features, edge_features = self.encoder(node_features, edge_features)
         # Process message passing
